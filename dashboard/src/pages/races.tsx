@@ -10,6 +10,7 @@ import {
   UrlField,
 } from "react-admin";
 import { RaceCircuitTab } from "../components/raceTabs/circuit/RaceCircuitTab";
+import { RaceDriversTab } from "../components/raceTabs/drivers/RaceDriversTab";
 
 export const RaceList = () => (
   <List>
@@ -69,7 +70,7 @@ export const RaceShow = () => (
         <RaceCircuitTab />
       </TabbedShowLayout.Tab>
       <TabbedShowLayout.Tab label="drivers" path="drivers">
-        <div>Please add information about the drivers in this race!</div>
+        <RaceDriversTab />
       </TabbedShowLayout.Tab>
       <TabbedShowLayout.Tab label="contructors" path="contructors">
         <div>Please add information about the contructors in this race!</div>
