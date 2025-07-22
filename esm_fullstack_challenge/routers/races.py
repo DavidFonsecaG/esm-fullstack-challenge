@@ -28,7 +28,7 @@ races_router.add_api_route(
     methods=["GET"], response_model=List[table_model],
 )
 
-# Route to get race circuit tab summary
+# Route to get race circuit tab data
 @races_router.get("/race_circuit_summary/{race_id}")
 def get_race_circuit_summary(race_id: int, db: DB = Depends(get_db)):
     with db.get_connection() as conn:
@@ -46,7 +46,7 @@ def get_race_circuit_summary(race_id: int, db: DB = Depends(get_db)):
             raise HTTPException(status_code=404, detail="Race not found.")
         race_name, year, circuit_name, location = row
 
-        # Top fastest laps
+        # Top 20 fastest laps
         cur.execute("""
             SELECT d.surname, l.lap, l.milliseconds
             FROM lap_times l
@@ -101,7 +101,7 @@ def get_race_circuit_summary(race_id: int, db: DB = Depends(get_db)):
         "position_evolution": position_evolution
     }
 
-
+# Route to get drivers tab data
 @races_router.get("/race_driver_summary/{race_id}")
 def get_race_driver_summary(race_id: int, db: DB = Depends(get_db)):
     with db.get_connection() as conn:
@@ -183,7 +183,7 @@ def get_race_driver_summary(race_id: int, db: DB = Depends(get_db)):
                 "time": format_ms(ms_int) if ms_int is not None else "N/A",
             }
 
-        # Full Results
+        # Race Results
         cur.execute("""
             SELECT r.position, d.forename, d.surname, c.name, r.time, r.milliseconds, r.points, r.laps
             FROM results r
@@ -194,7 +194,6 @@ def get_race_driver_summary(race_id: int, db: DB = Depends(get_db)):
         """, (race_id,))
         rows = cur.fetchall()
         results = []
-
         leader_ms = safe_int(rows[0][5]) if rows else None
         interval_val = 0
         for row in rows:
@@ -224,3 +223,108 @@ def get_race_driver_summary(race_id: int, db: DB = Depends(get_db)):
             "fastest_lap": fastest_lap_data,
             "results": results,
         }
+
+# Route to get constructors tab data
+@races_router.get("/race_constructor_summary/{race_id}")
+def get_race_constructor_summary(race_id: int, db: DB = Depends(get_db)):
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+
+        # Best Finishing Constructor
+        cur.execute("""
+            SELECT c.name, MIN(r.position)
+            FROM results r
+            JOIN constructors c ON r.constructor_id = c.id
+            WHERE r.race_id = ? AND r.position IS NOT NULL
+            GROUP BY c.id
+            ORDER BY MIN(r.position)
+            LIMIT 1
+        """, (race_id,))
+        best_finisher = cur.fetchone()
+        best_finisher_data = {"team": best_finisher[0], "position": best_finisher[1]} if best_finisher else None
+
+        # Constructor with Most Points
+        cur.execute("""
+            SELECT c.name, SUM(r.points)
+            FROM results r
+            JOIN constructors c ON r.constructor_id = c.id
+            WHERE r.race_id = ?
+            GROUP BY c.id
+            ORDER BY SUM(r.points) DESC
+            LIMIT 1
+        """, (race_id,))
+        top_points = cur.fetchone()
+        top_points_data = {"team": top_points[0], "points": top_points[1]} if top_points else None
+
+        # Constructor Results
+        cur.execute("""
+            SELECT c.name, d.forename || ' ' || d.surname, r.position, r.points, r.laps
+            FROM results r
+            JOIN constructors c ON r.constructor_id = c.id
+            JOIN drivers d ON r.driver_id = d.id
+            WHERE r.race_id = ?
+        """, (race_id,))
+        grouped = {}
+        for team, driver, position, points, laps in cur.fetchall():
+            if team not in grouped:
+                grouped[team] = {
+                    "team": team,
+                    "drivers": [],
+                    "positions": [],
+                    "points": 0,
+                    "laps": 0,
+                }
+            grouped[team]["drivers"].append(driver)
+            if position and position != "\\N":
+                grouped[team]["positions"].append(int(position))
+            grouped[team]["points"] += points or 0
+            grouped[team]["laps"] += laps or 0
+
+        constructor_results = []
+        for val in grouped.values():
+            positions = val["positions"]
+            constructor_results.append({
+                "team": val["team"],
+                "drivers": ", ".join(val["drivers"]),
+                "best_position": min(positions) if positions else None,
+                "avg_position": round(sum(positions)/len(positions), 2) if positions else None,
+                "total_points": val["points"],
+                "laps_completed": val["laps"],
+            })
+
+        # Points per driver
+        cur.execute("""
+            SELECT c.name, d.forename || ' ' || d.surname, r.points
+            FROM results r
+            JOIN constructors c ON r.constructor_id = c.id
+            JOIN drivers d ON r.driver_id = d.id
+            WHERE r.race_id = ?
+        """, (race_id,))
+        driver_points = [
+            {"constructor": row[0], "driver": row[1], "points": row[2] or 0}
+            for row in cur.fetchall()
+        ]
+
+        # Position Evolution
+        cur.execute("""
+            SELECT l.lap, c.name, AVG(CAST(l.position AS INTEGER))
+            FROM lap_times l
+            JOIN results r ON l.race_id = r.race_id AND l.driver_id = r.driver_id
+            JOIN constructors c ON r.constructor_id = c.id
+            WHERE l.race_id = ? AND l.position != '\\N'
+            GROUP BY l.lap, c.name
+            ORDER BY l.lap, c.name
+        """, (race_id,))
+        position_evolution = [
+            {"lap": lap, "team": team, "position": avg}
+            for lap, team, avg in cur.fetchall()
+        ]
+
+    return {
+        "best_finisher": best_finisher_data,
+        "most_points": top_points_data,
+        "results": constructor_results,
+        "driver_points": driver_points,
+        "position_evolution": position_evolution
+    }
+    

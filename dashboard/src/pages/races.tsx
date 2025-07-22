@@ -11,6 +11,7 @@ import {
 } from "react-admin";
 import { RaceCircuitTab } from "../components/raceTabs/circuit/RaceCircuitTab";
 import { RaceDriversTab } from "../components/raceTabs/drivers/RaceDriversTab";
+import { RaceConstructorsTab } from "../components/raceTabs/constructors/RaceConstructorsTab";
 
 export const RaceList = () => (
   <List>
@@ -73,7 +74,7 @@ export const RaceShow = () => (
         <RaceDriversTab />
       </TabbedShowLayout.Tab>
       <TabbedShowLayout.Tab label="contructors" path="contructors">
-        <div>Please add information about the contructors in this race!</div>
+        <RaceConstructorsTab />
       </TabbedShowLayout.Tab>
     </TabbedShowLayout>
   </Show>
