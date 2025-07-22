@@ -28,7 +28,7 @@ races_router.add_api_route(
     methods=["GET"], response_model=List[table_model],
 )
 
-# Route to get race circuit tab
+# Route to get race circuit tab summary
 @races_router.get("/race_circuit_summary/{race_id}")
 def get_race_circuit_summary(race_id: int, db: DB = Depends(get_db)):
     with db.get_connection() as conn:
@@ -45,83 +45,6 @@ def get_race_circuit_summary(race_id: int, db: DB = Depends(get_db)):
         if not row:
             raise HTTPException(status_code=404, detail="Race not found.")
         race_name, year, circuit_name, location = row
-
-        # Lap length
-        length_km = 5.793
-        laps = 52
-        race_distance_km = round(length_km * laps, 3)
-
-        # Fastest lap overall in race
-        cur.execute("""
-            SELECT milliseconds, driver_id, lap
-            FROM lap_times
-            WHERE race_id = ?
-            ORDER BY milliseconds ASC
-            LIMIT 1
-        """, (race_id,))
-        fl = cur.fetchone()
-        if fl:
-            fastest_lap_time_ms, fastest_driver_id, fastest_lap_number = fl
-            cur.execute("SELECT forename, surname FROM drivers WHERE id = ?", (fastest_driver_id,))
-            d = cur.fetchone()
-            fastest_driver_name = f"{d[0]} {d[1]}" if d else "Unknown"
-        else:
-            fastest_lap_time_ms = None
-            fastest_driver_name = None
-            fastest_lap_number = None
-    
-        # Fastest lap per driver
-        cur.execute("""
-            SELECT driver_id, MIN(milliseconds) as fastest
-            FROM lap_times
-            WHERE race_id = ?
-            GROUP BY driver_id
-            ORDER BY fastest ASC
-        """, (race_id,))
-        fastest_laps = cur.fetchall()
-        fastest_laps_per_driver = []
-        for driver_id, time_ms in fastest_laps:
-            cur.execute("SELECT forename, surname FROM drivers WHERE id = ?", (driver_id,))
-            d = cur.fetchone()
-            name = f"{d[0]} {d[1]}" if d else "Unknown"
-            fastest_laps_per_driver.append({
-                "driver": name,
-                "milliseconds": time_ms,
-            })
-
-        # Winner's position per lap
-        cur.execute("""
-            SELECT driver_id
-            FROM results
-            WHERE race_id = ?
-            ORDER BY position ASC
-            LIMIT 1
-        """, (race_id,))
-        winner = cur.fetchone()
-        winner_id = winner[0] if winner else None
-
-        winner_position_changes = []
-        if winner_id:
-            cur.execute("""
-                SELECT lap, position
-                FROM lap_times
-                WHERE race_id = ? AND driver_id = ?
-                ORDER BY lap
-            """, (race_id, winner_id))
-            winner_position_changes = [
-                {"lap": lap, "position": pos} for lap, pos in cur.fetchall()
-            ]
-
-        # Fastest lap timeline (scatter of all drivers)
-        cur.execute("""
-            SELECT lap, milliseconds
-            FROM lap_times
-            WHERE race_id = ?
-            ORDER BY lap
-        """, (race_id,))
-        fastest_lap_timeline = [
-            {"lap": lap, "milliseconds": ms} for lap, ms in cur.fetchall()
-        ]
 
         # Top fastest laps
         cur.execute("""
@@ -155,27 +78,6 @@ def get_race_circuit_summary(race_id: int, db: DB = Depends(get_db)):
             for row in cur.fetchall()
         ]
 
-        # Race pace candlesticks 
-        cur.execute("""
-            SELECT d.forename || ' ' || d.surname, 
-                MIN(l.milliseconds), 
-                AVG(l.milliseconds), 
-                MAX(l.milliseconds)
-            FROM lap_times l
-            JOIN drivers d ON l.driver_id = d.id
-            WHERE l.race_id = ?
-            GROUP BY d.id
-        """, (race_id,))
-        pace_candlestick = [
-            {
-                "driver": row[0],
-                "min": row[1],
-                "avg": row[2],
-                "max": row[3]
-            }
-            for row in cur.fetchall()
-        ]
-
         # Position Evolution for All Drivers
         cur.execute("""
             SELECT d.forename || ' ' || d.surname as driver, l.lap, l.position
@@ -188,34 +90,137 @@ def get_race_circuit_summary(race_id: int, db: DB = Depends(get_db)):
             {"driver": row[0], "lap": row[1], "position": row[2]}
             for row in cur.fetchall()
         ]
- 
-    def format_ms(ms: int) -> str:
-        if ms is None:
-            return "N/A"
-        minutes = ms // 60000
-        seconds = (ms % 60000) / 1000
-        return f"{minutes}:{seconds:06.3f}"
 
     return {
         "circuit_name": circuit_name,
         "location": location,
         "race_name": race_name,
         "year": year,
-        "laps": laps,
-        "length_km": length_km,
-        "race_distance_km": race_distance_km,
-        "fastest_lap": {
-            "time": format_ms(fastest_lap_time_ms),
-            "driver": fastest_driver_name,
-            "lap": fastest_lap_number
-        },
-        "fastest_laps_per_driver": fastest_laps_per_driver,
-        "winner_position_changes": winner_position_changes,
-        "fastest_lap_timeline": fastest_lap_timeline,
-
         "top_fastest_laps": top_fastest_laps,
         "pace_evolution": pace_evolution,
-        "pace_candlestick": pace_candlestick,
-
         "position_evolution": position_evolution
     }
+
+
+@races_router.get("/race_driver_summary/{race_id}")
+def get_race_driver_summary(race_id: int, db: DB = Depends(get_db)):
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+
+        def get_driver_name(driver_id):
+            cur.execute("SELECT forename, surname FROM drivers WHERE id = ?", (driver_id,))
+            d = cur.fetchone()
+            return f"{d[0]} {d[1]}" if d else "Unknown"
+
+        def get_constructor_info(constructor_id):
+            cur.execute("SELECT name FROM constructors WHERE id = ?", (constructor_id,))
+            c = cur.fetchone()
+            return {"name": c[0]} if c else {"name": "Unknown"}
+
+        def safe_int(val):
+            try:
+                return int(val)
+            except (ValueError, TypeError):
+                return None
+
+        def format_ms(ms: int):
+            minutes = ms // 60000
+            seconds = (ms % 60000) / 1000
+            return f"{minutes}:{seconds:06.3f}"
+
+        # Race Winner
+        cur.execute("""
+            SELECT driver_id, constructor_id, time, milliseconds
+            FROM results
+            WHERE race_id = ? AND position = 1
+        """, (race_id,))
+        winner = cur.fetchone()
+        winner_data = None
+        if winner:
+            driver_id, constructor_id, time, _ = winner
+            winner_data = {
+                "driver": get_driver_name(driver_id),
+                "team": get_constructor_info(constructor_id)["name"],
+                "time": time,
+            }
+
+        # Pole Position
+        cur.execute("""
+            SELECT driver_id, constructor_id, q3
+            FROM qualifying
+            WHERE race_id = ? AND q3 IS NOT NULL
+            ORDER BY q3 ASC
+            LIMIT 1
+        """, (race_id,))
+        pole = cur.fetchone()
+        pole_data = None
+        if pole:
+            driver_id, constructor_id, q3_time = pole
+            pole_data = {
+                "driver": get_driver_name(driver_id),
+                "team": get_constructor_info(constructor_id)["name"],
+                "time": q3_time,
+            }
+
+        # Fastest Lap
+        cur.execute("""
+            SELECT lt.driver_id, r.constructor_id, lt.lap, lt.milliseconds
+            FROM lap_times lt
+            JOIN results r ON lt.race_id = r.race_id AND lt.driver_id = r.driver_id
+            WHERE lt.race_id = ?
+            ORDER BY lt.milliseconds ASC
+            LIMIT 1
+        """, (race_id,))
+        fl = cur.fetchone()
+        fastest_lap_data = None
+        if fl:
+            driver_id, constructor_id, lap, ms = fl
+            ms_int = safe_int(ms)
+            fastest_lap_data = {
+                "driver": get_driver_name(driver_id),
+                "team": get_constructor_info(constructor_id)["name"],
+                "lap": lap,
+                "time": format_ms(ms_int) if ms_int is not None else "N/A",
+            }
+
+        # Full Results
+        cur.execute("""
+            SELECT r.position, d.forename, d.surname, c.name, r.time, r.milliseconds, r.points, r.laps
+            FROM results r
+            JOIN drivers d ON r.driver_id = d.id
+            JOIN constructors c ON r.constructor_id = c.id
+            WHERE r.race_id = ?
+            ORDER BY r.milliseconds ASC
+        """, (race_id,))
+        rows = cur.fetchall()
+        results = []
+
+        leader_ms = safe_int(rows[0][5]) if rows else None
+        interval_val = 0
+        for row in rows:
+            pos, forename, surname, team, time, ms, points, laps = row
+            ms_val = safe_int(ms)
+            gap = ""
+            if leader_ms is not None and ms_val is not None:
+                gap_val = round((ms_val - leader_ms) / 1000, 3)
+                gap = f"+{gap_val}s" if gap_val > 0 else ""
+                interval_val += gap_val
+                interval = f"+{round(interval_val, 3)}s" if gap_val > 0 else ""
+
+            results.append({
+                "position": pos,
+                "driver": f"{forename} {surname}",
+                "team": team,
+                "time": time,
+                "gap": gap if pos > "1" else "",
+                "interval": interval if pos > "1" else "",
+                "points": points,
+                "laps": laps,
+            })
+
+        return {
+            "race_winner": winner_data,
+            "pole_position": pole_data,
+            "fastest_lap": fastest_lap_data,
+            "results": results,
+        }
