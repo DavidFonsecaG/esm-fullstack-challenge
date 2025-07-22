@@ -9,6 +9,7 @@ import {
   TextField,
   UrlField,
 } from "react-admin";
+import { RaceCircuitTab } from "../components/raceTabs/circuit/RaceCircuitTab";
 
 export const RaceList = () => (
   <List>
@@ -65,7 +66,7 @@ export const RaceShow = () => (
         <TextField source="sprint_time" />
       </TabbedShowLayout.Tab>
       <TabbedShowLayout.Tab label="circuit" path="circuit">
-        <div>Please add information about the circuit used in this race!</div>
+        <RaceCircuitTab />
       </TabbedShowLayout.Tab>
       <TabbedShowLayout.Tab label="drivers" path="drivers">
         <div>Please add information about the drivers in this race!</div>
