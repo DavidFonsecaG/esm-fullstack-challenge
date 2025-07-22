@@ -31,7 +31,7 @@ export const RaceCircuitTab = () => {
       <WikiImage titleField="name" />
       <div style={{ display: "flex", gap: "1rem", marginTop: "1rem" }}>
         <div style={{ flex: 1, border: "1px solid #ccc", borderRadius: "8px", paddingTop: "1rem" }}>
-          <h3>Top 20 Fastest Laps</h3>
+          <h3 style={{ marginLeft: "1rem" }}>Top 20 Fastest Laps</h3>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
             <thead>
               <tr style={{ backgroundColor: "#f5f5f5", textAlign: "left" }}>
